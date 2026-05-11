@@ -1,60 +1,7 @@
 # encoding: utf-8
-"""
-Read images and corresponding labels.
-"""
-
 import torch
 from torch.utils.data import Dataset
-import pandas as pd
-import numpy as np
-from PIL import Image
-import os
-import itertools
-from torch.utils.data.sampler import Sampler
-
-
-N_CLASSES = 5
-CLASS_NAMES = [ 'Melanoma', 'Melanocytic nevus', 'Basal cell carcinoma', 'Actinic keratosis', 'Benign keratosis']
-
-
-class CheXpertDataset(Dataset):
-    def __init__(self, root_dir, csv_file, transform=None):
-        """
-        Args:
-            data_dir: path to image directory.
-            csv_file: path to the file containing images
-                with corresponding labels.
-            transform: optional transform to be applied on a sample.
-        """
-        super(CheXpertDataset, self).__init__()
-        file = pd.read_csv(csv_file)
-
-        self.root_dir = root_dir
-        self.images = file['ImageID'].values
-        self.labels = file.iloc[:, 1:].values.astype(int)
-        self.transform = transform
-
-        print('Total # images:{}, labels:{}'.format(len(self.images),len(self.labels)))
-
-    def __getitem__(self, index):
-        """
-        Args:
-            index: the index of item
-        Returns:
-            image and its labels
-        """
-        items = self.images[index]#.split('/')
-        #study = items[2] + '/' + items[3]
-        image_name = os.path.join(self.root_dir, self.images[index])
-        image = Image.open(image_name).convert('RGB')
-        label = self.labels[index]
-        #print(label)
-        if self.transform is not None:
-            image = self.transform(image)
-        return items, index, image, torch.FloatTensor(label)
-
-    def __len__(self):
-        return len(self.images)
+from torchvision import datasets
 
 
 class TransformTwice:
@@ -66,3 +13,36 @@ class TransformTwice:
         out2 = self.transform(inp)
         return out1, out2
 
+
+class CIFARDataset(Dataset):
+    """
+    Output format is aligned with original project:
+    returns: items, index, image, onehot_label
+    where image can be either tensor or (tensor, tensor) when TransformTwice is used.
+    """
+
+    def __init__(self, root_dir, dataset_name="cifar10", train=True, transform=None, download=False):
+        super(CIFARDataset, self).__init__()
+        dataset_name = dataset_name.lower()
+        if dataset_name == "cifar10":
+            base = datasets.CIFAR10(root=root_dir, train=train, transform=transform, download=download)
+            self.num_classes = 10
+        elif dataset_name == "cifar100":
+            base = datasets.CIFAR100(root=root_dir, train=train, transform=transform, download=download)
+            self.num_classes = 100
+        else:
+            raise ValueError("dataset_name must be 'cifar10' or 'cifar100'")
+
+        self.base = base
+        self.targets = base.targets
+        print("Total # images:{}, classes:{}".format(len(self.base), self.num_classes))
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, index):
+        image, class_id = self.base[index]
+        onehot = torch.zeros(self.num_classes, dtype=torch.float32)
+        onehot[int(class_id)] = 1.0
+        item_name = "{}_{}".format("img", index)
+        return item_name, index, image, onehot
