@@ -1,4 +1,5 @@
 # encoding: utf-8
+import os
 import torch
 from torch.utils.data import Dataset
 from torchvision import datasets
@@ -25,13 +26,33 @@ class CIFARDataset(Dataset):
         super(CIFARDataset, self).__init__()
         dataset_name = dataset_name.lower()
         if dataset_name == "cifar10":
-            base = datasets.CIFAR10(root=root_dir, train=train, transform=transform, download=download)
+            dataset_ctor = datasets.CIFAR10
             self.num_classes = 10
+            subdirs = ["CIFAR10", "cifar10", "cifar-10"]
         elif dataset_name == "cifar100":
-            base = datasets.CIFAR100(root=root_dir, train=train, transform=transform, download=download)
+            dataset_ctor = datasets.CIFAR100
             self.num_classes = 100
+            subdirs = ["CIFAR100", "cifar100", "cifar-100"]
         else:
             raise ValueError("dataset_name must be 'cifar10' or 'cifar100'")
+
+        candidate_roots = [root_dir] + [os.path.join(root_dir, s) for s in subdirs]
+        base = None
+        last_err = None
+        for cand_root in candidate_roots:
+            try:
+                base = dataset_ctor(root=cand_root, train=train, transform=transform, download=download)
+                print("Using {} root: {}".format(dataset_name, cand_root))
+                break
+            except RuntimeError as e:
+                last_err = e
+                continue
+
+        if base is None:
+            tried = "\n".join(candidate_roots)
+            raise RuntimeError(
+                "Dataset not found. Tried roots:\n{}\nOriginal error: {}".format(tried, str(last_err))
+            )
 
         self.base = base
         self.targets = base.targets
