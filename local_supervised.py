@@ -49,11 +49,9 @@ class SupervisedLocalUpdate(object):
           self.proto_count = torch.zeros((args.num_classes,)).cuda()
         # train and update
           epoch_loss = []
-          print('begin training')
           for epoch in range(args.local_ep):
                batch_loss = []
                iter_max = len(self.ldr_train)
-               print(iter_max) 
                for i, (_,_, (image_batch, ema_image_batch), label_batch) in enumerate(self.ldr_train):
                     image_batch, ema_image_batch, label_batch = image_batch.cuda(), ema_image_batch.cuda(), label_batch.cuda()
                     ema_inputs = ema_image_batch 
@@ -86,7 +84,6 @@ class SupervisedLocalUpdate(object):
 
                self.epoch = self.epoch + 1
                epoch_loss.append(np.array(batch_loss).mean())
-               print(epoch_loss)
           return (
                net.state_dict(),
                sum(epoch_loss) / len(epoch_loss),

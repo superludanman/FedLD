@@ -42,7 +42,7 @@ class CIFARDataset(Dataset):
         for cand_root in candidate_roots:
             try:
                 base = dataset_ctor(root=cand_root, train=train, transform=transform, download=download)
-                print("Using {} root: {}".format(dataset_name, cand_root))
+                print("[Dataset] {} root={}".format(dataset_name, cand_root))
                 break
             except RuntimeError as e:
                 last_err = e
@@ -56,7 +56,8 @@ class CIFARDataset(Dataset):
 
         self.base = base
         self.targets = base.targets
-        print("Total # images:{}, classes:{}".format(len(self.base), self.num_classes))
+        split_name = "train" if train else "test"
+        print("[Dataset] split={} size={} classes={}".format(split_name, len(self.base), self.num_classes))
 
     def __len__(self):
         return len(self.base)

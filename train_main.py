@@ -48,7 +48,6 @@ snapshot_path = 'model/'
 supervised_user_id = [0, 1]
 unsupervised_user_id = [2, 3, 4, 5, 6, 7, 8, 9]
 flag_create = False
-print('done')
 
 if __name__ == '__main__':
     args = args_parser()
@@ -67,8 +66,8 @@ if __name__ == '__main__':
     logging.basicConfig(filename="log.txt", level=logging.INFO,
                         format='[%(asctime)s.%(msecs)03d] %(message)s', datefmt='%H:%M:%S')
     logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
-    logging.info(str(args))
-    logging.info("CUDA available: {}, visible GPUs: {}, DataParallel: {}".format(use_cuda, visible_gpu_count, use_dp))
+    logging.info("[Config] {}".format(str(args)))
+    logging.info("[System] CUDA available: {} | visible GPUs: {} | DataParallel: {}".format(use_cuda, visible_gpu_count, use_dp))
 
     if args.deterministic:
         cudnn.benchmark = False
@@ -94,6 +93,9 @@ if __name__ == '__main__':
     train_dataset = dataset.CIFARDataset(root_dir=args.root_path, dataset_name=args.dataset, train=True, transform=train_transform, download=False)
     test_dataset = dataset.CIFARDataset(root_dir=args.root_path, dataset_name=args.dataset, train=False, transform=test_transform, download=False)
     test_dataloader = DataLoader(dataset=test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=use_cuda)
+    logging.info("[Data] train_size={} test_size={} dataset={} num_classes={}".format(
+        len(train_dataset), len(test_dataset), args.dataset, args.num_classes
+    ))
 
     dict_users = split(train_dataset, args.num_users)
     net_glob = DenseNet121(out_size=args.num_classes, mode=args.label_uncertainty, drop_rate=args.drop_rate)
@@ -118,15 +120,18 @@ if __name__ == '__main__':
 
     for i in unsupervised_user_id:
         trainer_locals.append(UnsupervisedLocalUpdate(args, train_dataset, dict_users[i]))
+    logging.info("[Init] supervised_clients={} unsupervised_clients={}".format(len(supervised_user_id), len(unsupervised_user_id)))
 
     for com_round in range(args.rounds):
-        print("begin")
         loss_locals = []
+        sup_losses = []
+        unsup_losses = []
         proto_sums = torch.zeros_like(anchor_bank)
         proto_counts = torch.zeros(args.num_classes, device=anchor_bank.device)
         current_weights = []
         current_coeffs = []
         unsup_confidence_log = []
+        unsup_coeff_log = []
 
         for idx in supervised_user_id:
             local = trainer_locals[idx]
@@ -136,11 +141,12 @@ if __name__ == '__main__':
             current_coeffs.append(1.0)
             optim_locals[idx] = copy.deepcopy(op)
             loss_locals.append(copy.deepcopy(loss))
+            sup_losses.append(float(loss))
             proto_sums += local_proto_sum.to(anchor_bank.device)
             proto_counts += local_proto_count.to(anchor_bank.device)
 
         if not flag_create:
-            print('begin unsup')
+            logging.info("[Round {:03d}] initialize unsupervised client models".format(com_round))
             for i in unsupervised_user_id:
                 net_locals.append(copy.deepcopy(net_glob).to(device))
                 optimizer = torch.optim.Adam(net_locals[i].parameters(), lr=args.base_lr, betas=(0.9, 0.999), weight_decay=5e-4)
@@ -159,13 +165,16 @@ if __name__ == '__main__':
             current_coeffs.append(float(unsup_coeff))
             optim_locals[idx] = copy.deepcopy(op)
             loss_locals.append(copy.deepcopy(loss))
+            unsup_losses.append(float(loss))
             unsup_confidence_log.append(conf_clamped)
+            unsup_coeff_log.append(float(unsup_coeff))
             if conf_clamped >= args.unsup_conf_for_anchor:
                 proto_sums += unsup_proto_sum.to(anchor_bank.device)
                 proto_counts += unsup_proto_count.to(anchor_bank.device)
 
         with torch.no_grad():
             proto_mean, valid = reduce_prototypes(proto_sums, proto_counts)
+            valid_cls = int(valid.sum().item())
             if valid.any():
                 anchor_bank[valid] = args.anchor_momentum * anchor_bank[valid] + (1 - args.anchor_momentum) * proto_mean[valid]
                 anchor_bank = F.normalize(anchor_bank, dim=1)
@@ -180,17 +189,25 @@ if __name__ == '__main__':
             net_locals[i].load_state_dict(w_glob)
 
         loss_avg = sum(loss_locals) / len(loss_locals)
-        print(loss_avg, com_round)
-        logging.info('Loss Avg {} Round {} LR {} '.format(loss_avg, com_round, args.base_lr))
-        if len(unsup_confidence_log) > 0:
-            logging.info('Unsup confidence mean {:.4f} max {:.4f}'.format(
-                float(np.mean(unsup_confidence_log)),
-                float(np.max(unsup_confidence_log))
-            ))
+        sup_loss_mean = float(np.mean(sup_losses)) if len(sup_losses) > 0 else 0.0
+        unsup_loss_mean = float(np.mean(unsup_losses)) if len(unsup_losses) > 0 else 0.0
+        unsup_conf_mean = float(np.mean(unsup_confidence_log)) if len(unsup_confidence_log) > 0 else 0.0
+        unsup_conf_max = float(np.max(unsup_confidence_log)) if len(unsup_confidence_log) > 0 else 0.0
+        unsup_w_mean = float(np.mean(unsup_coeff_log)) if len(unsup_coeff_log) > 0 else 0.0
+        unsup_w_max = float(np.max(unsup_coeff_log)) if len(unsup_coeff_log) > 0 else 0.0
+        logging.info(
+            "[Round {:03d}] total_loss={:.4f} sup_loss={:.4f} unsup_loss={:.4f} "
+            "unsup_conf(mean/max)={:.3f}/{:.3f} unsup_w(mean/max)={:.3f}/{:.3f} "
+            "anchor_valid_cls={} lr={:.2e}".format(
+                com_round, loss_avg, sup_loss_mean, unsup_loss_mean,
+                unsup_conf_mean, unsup_conf_max, unsup_w_mean, unsup_w_max,
+                valid_cls, args.base_lr
+            )
+        )
         if com_round % 10 == 0:
             os.makedirs(snapshot_path, exist_ok=True)
             save_mode_path = os.path.join(snapshot_path, 'epoch_' + str(com_round) + '.pth')
             state_dict = net_glob.module.state_dict() if hasattr(net_glob, 'module') else net_glob.state_dict()
             torch.save({'state_dict': state_dict}, save_mode_path)
             top1 = eval_top1(net_glob, test_dataloader, device)
-            logging.info("\nTEST Round {}: Top-1 Acc {:.6f}".format(com_round, top1))
+            logging.info("[Eval  {:03d}] Top-1 Acc={:.4f} ckpt={}".format(com_round, top1, save_mode_path))

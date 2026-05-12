@@ -7,7 +7,6 @@ import torch.nn.functional as F
 from options import args_parser
 from networks.models import DenseNet121
 from utils import losses, ramps
-from utils.util import get_timestamp
 from semantic_anchor import anchor_calibration_loss
 from semantic_anchor import compute_batch_prototypes
 args = args_parser()
@@ -64,7 +63,6 @@ class UnsupervisedLocalUpdate(object):
           if self.flag:
                self.ema_model.load_state_dict(net.state_dict())
                self.flag = False 
-               print('done')
      
           epoch_loss = []
           confidence_sum = 0.0
@@ -73,7 +71,6 @@ class UnsupervisedLocalUpdate(object):
           total_sum = 0.0
           proto_sum = torch.zeros((args.num_classes, semantic_anchors.size(1))).cuda()
           proto_count = torch.zeros((args.num_classes,)).cuda()
-          print('begin training')
           for epoch in range(args.local_ep):
 
                batch_loss = []
@@ -163,13 +160,8 @@ class UnsupervisedLocalUpdate(object):
                     
                     self.iter_num = self.iter_num + 1
                     
-               timestamp = get_timestamp()
-
-               
-              
                self.epoch = self.epoch + 1
                epoch_loss.append(sum(batch_loss) / len(batch_loss))
-               print(epoch_loss)
           mean_confidence = confidence_sum / max(confidence_cnt, 1.0)
           selection_ratio = selected_sum / max(total_sum, 1.0)
           unsup_confidence = 0.5 * mean_confidence + 0.5 * selection_ratio
